@@ -2,14 +2,45 @@ package rotatefiles
 
 import "time"
 
-type optionFunc func(*RotateFiles)
-
-func (f optionFunc) apply(rf *RotateFiles) {
-	f(rf)
+// WithMaxAge, files that have survived for more than age
+// will be deleted.
+// This option conflicts with WithMaxCount, the latter option will
+// override the previous option.
+func WithMaxAge(age time.Duration) Option {
+	return optionFunc(func(rf *RotateFiles) {
+		rf.reserveThreshold = age
+	})
 }
 
-func WithMaxAge(maxAge time.Duration) Option {
+// WithMaxCount, if files number more than maxCount, the older files
+// will be deleted.
+// This option conflicts with WithMaxCount, the latter option will
+// override the previous option.
+func WithMaxCount(count int) Option {
 	return optionFunc(func(rf *RotateFiles) {
-		rf.maxAge = maxAge
+		rf.reserveThreshold = count
+	})
+}
+
+// WithRotatePeroid, sets the time between rotation.
+func WithRotatePeroid(peroid time.Duration) Option {
+	return optionFunc(func(rf *RotateFiles) {
+		rf.rotatePeroid = peroid
+	})
+}
+
+// WithRotateSize, if file size greater than rotate size, rotate will
+// occur.
+func WithRotateSize(size int) Option {
+	return optionFunc(func(rf *RotateFiles) {
+		rf.rotateSize = size
+	})
+}
+
+// WithLocalClock, sets a clock that the RotateFiles object will
+// use to determine the current time.
+func WithLocalClock() Option {
+	return optionFunc(func(rf *RotateFiles) {
+		rf.clock = Local
 	})
 }
