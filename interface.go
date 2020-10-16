@@ -12,11 +12,11 @@ func (f optionFunc) apply(rf *RotateFiles) {
 }
 
 type Clock interface {
-	now() time.Time
+	Now() time.Time
 }
 type clockFunc func() time.Time
 
-func (f clockFunc) now() time.Time {
+func (f clockFunc) Now() time.Time {
 	return f()
 }
 

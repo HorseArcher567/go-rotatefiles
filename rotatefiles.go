@@ -2,8 +2,10 @@ package rotatefiles
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -50,8 +52,10 @@ var pcs = []*patternConversion{
 // RotateFiles represents file that gets automatically
 // rotated as you write to it.
 type RotateFiles struct {
+	fileName string
 	// File name template
 	filePattern string
+	timeLayout  string
 	// Regular expression to match file name
 	regexpPattern string
 	// Glob to match file name
@@ -59,10 +63,12 @@ type RotateFiles struct {
 
 	mutex sync.Mutex
 	// Current using file name
-	currentFile string
-	generation  int
-	file        *os.File
-	size        int
+	curFileName    string
+	generation     int
+	lastRotateTime time.Time
+
+	file *os.File
+	size int
 
 	// Use local time or
 	clock Clock
@@ -84,7 +90,12 @@ func New(filePattern string, options ...Option) (*RotateFiles, error) {
 	}
 
 	rf := &RotateFiles{
-		filePattern: filePattern,
+		fileName:      filePattern,
+		filePattern:   filePattern,
+		regexpPattern: filePattern,
+		globPattern:   filePattern,
+		// default, use local time
+		clock: Local,
 		// default, max age is 7 day
 		reserveThreshold: 7 * 24 * time.Hour,
 		// default, rotate peroid is a day
@@ -115,17 +126,64 @@ func (rf *RotateFiles) withOptions(options ...Option) {
 }
 
 func (rf *RotateFiles) rotate() {
-	rf.mutex.Lock()
-	defer rf.mutex.Unlock()
-
-	if len(rf.currentFile) == 0 {
-	}
+	_ = rf.rotateByTime() || rf.rotateBySize()
 }
 
-func (rf *RotateFiles) genFileName() {
+func (rf *RotateFiles) rotateByTime() bool {
+	now := rf.clock.Now()
+	truncTime := now.Truncate(rf.rotatePeroid)
+	if truncTime == rf.lastRotateTime {
+		return false
+	}
 
+	rf.lastRotateTime = truncTime
+	rf.generation = 0
+	rf.genFile()
+
+	return true
+}
+
+func (rf *RotateFiles) rotateBySize() bool {
+	if rf.size < rf.rotateSize {
+		return false
+	}
+
+	rf.genFile()
+
+	return true
+}
+
+func (rf *RotateFiles) genFile() {
+	fileTime := rf.lastRotateTime.Format(rf.timeLayout)
+	for {
+		rf.curFileName =
+			rf.fileName + fileTime + "_" + strconv.Itoa(rf.generation) + ".log"
+		_, err := os.Stat(rf.curFileName)
+		if err != nil {
+			break
+		}
+
+		rf.generation++
+	}
+
+	file, err := os.OpenFile(rf.curFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	if rf.file != nil {
+		rf.file.Close()
+	}
+
+	rf.file = file
 }
 
 func (rf *RotateFiles) Write(p []byte) (n int, err error) {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+
+	rf.rotate()
+
 	return rf.file.Write(p)
 }

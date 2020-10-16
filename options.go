@@ -2,6 +2,14 @@ package rotatefiles
 
 import "time"
 
+// WithTimeLayout, default time layout "2006-01-02", you can use
+// layout to format your file name, same to time.Format()
+func WithTimeLayout(layout string) Option {
+	return optionFunc(func(rf *RotateFiles) {
+		rf.timeLayout = layout
+	})
+}
+
 // WithMaxAge, files that have survived for more than age
 // will be deleted.
 // This option conflicts with WithMaxCount, the latter option will

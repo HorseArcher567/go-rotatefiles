@@ -45,12 +45,18 @@ func TestTimeTruncate(tt *testing.T) {
 }
 
 func TestNewRotateFiles(t *testing.T) {
-	rf, err := New("demo-info-%yyyy-%MM-%dd.log",
+	rf, err := New("demo-info",
+		WithTimeLayout("2006-01-02_15"),
 		WithMaxAge(time.Minute))
 	if err != nil {
 		fmt.Println(err)
 	} else {
 		fmt.Println(rf)
+		str := "adfasdfasdfasdfasdfadsfadsfa\n"
+		str1 := []byte(str)
+		for i := 0; i < 1000; i++ {
+			rf.Write(str1)
+		}
 	}
 
 	fmt.Println("===========================================")
