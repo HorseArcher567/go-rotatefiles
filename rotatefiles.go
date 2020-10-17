@@ -126,7 +126,6 @@ func (rf *RotateFiles) genFile() error {
 		rf.curFileName =
 			rf.fileName + fileTime + "_" + strconv.Itoa(rf.generation) + ".log"
 		_, err := os.Stat(rf.dir + rf.curFileName)
-		fmt.Println(rf.curFileName, err)
 		if os.IsNotExist(err) {
 			break
 		}
@@ -134,7 +133,6 @@ func (rf *RotateFiles) genFile() error {
 		rf.generation++
 	}
 
-	fmt.Println("++++++++++++++:", rf.curFileName)
 	file, err := os.OpenFile(rf.dir+rf.curFileName,
 		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -145,7 +143,7 @@ func (rf *RotateFiles) genFile() error {
 		rf.file.Close()
 	}
 
-	rf.cleanFile()
+	go rf.cleanFile()
 
 	rf.file = file
 	rf.size = 0
@@ -180,14 +178,17 @@ func (rf *RotateFiles) cleanFile() {
 		return
 	}
 
+	//fmt.Println(matches)
+
 	generatedFiles := make([]*GeneratedFile, 0)
 
 	for _, match := range matches {
 		_, file := filepath.Split(match)
 		index := strings.LastIndexByte(file, '_')
 		if index != -1 {
-			_, err := time.Parse(rf.fileName+rf.timeLayout, file[0:index])
+			_, err := time.Parse(rf.timeLayout, file[len(rf.fileName):index])
 			if err != nil {
+				fmt.Println(err)
 				continue
 			}
 
@@ -203,13 +204,10 @@ func (rf *RotateFiles) cleanFile() {
 		}
 	}
 
-	fmt.Println(len(generatedFiles))
-
 	switch rf.reserveThreshold.(type) {
 	case int:
 		sort.Sort(GeneratedFileSlice(generatedFiles))
 		for index, file := range generatedFiles {
-			fmt.Println(index, file.filePath, rf.reserveThreshold.(int))
 			if index >= rf.reserveThreshold.(int) {
 				fmt.Println("maxcount----------------:", file.filePath)
 				os.Remove(file.filePath)
