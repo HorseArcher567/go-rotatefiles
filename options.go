@@ -10,6 +10,12 @@ func WithTimeLayout(layout string) Option {
 	})
 }
 
+func WithDir(dir string) Option {
+	return optionFunc(func(rf *RotateFiles) {
+		rf.dir = dir
+	})
+}
+
 // WithMaxAge, files that have survived for more than age
 // will be deleted.
 // This option conflicts with WithMaxCount, the latter option will

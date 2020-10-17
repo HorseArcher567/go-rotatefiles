@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,53 +16,14 @@ import (
 type patternConversion struct {
 	regexp     *regexp.Regexp
 	replRegexp string
-	replGlob   string
-}
-
-var pcs = []*patternConversion{
-	{
-		regexp:     regexp.MustCompile(`%yyyy`),
-		replRegexp: `\d{4}`,
-		replGlob:   `????`,
-	},
-	{
-		regexp:     regexp.MustCompile(`%MM`),
-		replRegexp: `\d{2}`,
-		replGlob:   `??`,
-	},
-	{
-		regexp:     regexp.MustCompile(`%dd`),
-		replRegexp: `\d{2}`,
-		replGlob:   `??`,
-	},
-	{
-		regexp:     regexp.MustCompile(`%HH`),
-		replRegexp: `\d{2}`,
-		replGlob:   `??`,
-	},
-	{
-		regexp:     regexp.MustCompile(`%mm`),
-		replRegexp: `\d{2}`,
-		replGlob:   `??`,
-	},
-	{
-		regexp:     regexp.MustCompile(`%ss`),
-		replRegexp: `\d{2}`,
-		replGlob:   `??`,
-	},
 }
 
 // RotateFiles represents file that gets automatically
 // rotated as you write to it.
 type RotateFiles struct {
-	fileName string
-	// File name template
-	filePattern string
-	timeLayout  string
-	// Regular expression to match file name
-	regexpPattern string
-	// Glob to match file name
-	globPattern string
+	fileName   string
+	timeLayout string
+	dir        string
 
 	mutex sync.Mutex
 	// Current using file name
@@ -69,6 +33,8 @@ type RotateFiles struct {
 
 	file *os.File
 	size int
+
+	cleanMutex sync.Mutex
 
 	// Use local time or
 	clock Clock
@@ -81,19 +47,15 @@ type RotateFiles struct {
 }
 
 // New constructs a new RotateFiles from the provided file pattern and options.
-// filePattern stipulate file name pattern, for example
-// demo-info-%yyyy-%MM-%dd_%HH-%mm-%ss.log will create file like
-// demo-info-2020-10-16_12-59-59.log
 func New(filePattern string, options ...Option) (*RotateFiles, error) {
 	if len(filePattern) == 0 {
 		return nil, errors.New("File pattern must not be empty")
 	}
 
 	rf := &RotateFiles{
-		fileName:      filePattern,
-		filePattern:   filePattern,
-		regexpPattern: filePattern,
-		globPattern:   filePattern,
+		fileName:   filePattern,
+		timeLayout: `2006-01-02`,
+		dir:        "./log/",
 		// default, use local time
 		clock: Local,
 		// default, max age is 7 day
@@ -104,19 +66,9 @@ func New(filePattern string, options ...Option) (*RotateFiles, error) {
 		rotateSize: 2 * 1024 * 1024 * 1024,
 	}
 
-	rf.convertPattern()
 	rf.withOptions(options...)
 
 	return rf, nil
-}
-
-func (rf *RotateFiles) convertPattern() {
-	for _, pc := range pcs {
-		rf.regexpPattern =
-			pc.regexp.ReplaceAllString(rf.regexpPattern, pc.replRegexp)
-		rf.globPattern =
-			pc.regexp.ReplaceAllString(rf.globPattern, pc.replGlob)
-	}
 }
 
 func (rf *RotateFiles) withOptions(options ...Option) {
@@ -137,8 +89,14 @@ func (rf *RotateFiles) rotateByTime() bool {
 	}
 
 	rf.lastRotateTime = truncTime
+	oldGeneration := rf.generation
 	rf.generation = 0
-	rf.genFile()
+	err := rf.genFile()
+	if err != nil {
+		rf.generation = oldGeneration
+		fmt.Println(err)
+		return false
+	}
 
 	return true
 }
@@ -148,35 +106,126 @@ func (rf *RotateFiles) rotateBySize() bool {
 		return false
 	}
 
-	rf.genFile()
+	err := rf.genFile()
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
 
 	return true
 }
 
-func (rf *RotateFiles) genFile() {
+func (rf *RotateFiles) genFile() error {
+	err := os.MkdirAll(rf.dir, 0755)
+	if err != nil {
+		panic(err)
+	}
+
 	fileTime := rf.lastRotateTime.Format(rf.timeLayout)
 	for {
 		rf.curFileName =
 			rf.fileName + fileTime + "_" + strconv.Itoa(rf.generation) + ".log"
-		_, err := os.Stat(rf.curFileName)
-		if err != nil {
+		_, err := os.Stat(rf.dir + rf.curFileName)
+		fmt.Println(rf.curFileName, err)
+		if os.IsNotExist(err) {
 			break
 		}
 
 		rf.generation++
 	}
 
-	file, err := os.OpenFile(rf.curFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	fmt.Println("++++++++++++++:", rf.curFileName)
+	file, err := os.OpenFile(rf.dir+rf.curFileName,
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Println(err)
-		return
+		panic(err)
 	}
 
 	if rf.file != nil {
 		rf.file.Close()
 	}
 
+	rf.cleanFile()
+
 	rf.file = file
+	rf.size = 0
+	return nil
+}
+
+type GeneratedFile struct {
+	filePath string
+	modTime  time.Time
+}
+type GeneratedFileSlice []*GeneratedFile
+
+func (s GeneratedFileSlice) Len() int {
+	return len(s)
+}
+
+func (s GeneratedFileSlice) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s GeneratedFileSlice) Less(i, j int) bool {
+	return s[i].modTime.After(s[j].modTime)
+}
+
+func (rf *RotateFiles) cleanFile() {
+	rf.cleanMutex.Lock()
+	defer rf.cleanMutex.Unlock()
+
+	matches, err := filepath.Glob(rf.dir + rf.fileName + "*.log")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	generatedFiles := make([]*GeneratedFile, 0)
+
+	for _, match := range matches {
+		_, file := filepath.Split(match)
+		index := strings.LastIndexByte(file, '_')
+		if index != -1 {
+			_, err := time.Parse(rf.fileName+rf.timeLayout, file[0:index])
+			if err != nil {
+				continue
+			}
+
+			fileInfo, err := os.Stat(match)
+			if err != nil {
+				continue
+			}
+
+			generatedFiles = append(generatedFiles, &GeneratedFile{
+				filePath: match,
+				modTime:  fileInfo.ModTime(),
+			})
+		}
+	}
+
+	fmt.Println(len(generatedFiles))
+
+	switch rf.reserveThreshold.(type) {
+	case int:
+		sort.Sort(GeneratedFileSlice(generatedFiles))
+		for index, file := range generatedFiles {
+			fmt.Println(index, file.filePath, rf.reserveThreshold.(int))
+			if index >= rf.reserveThreshold.(int) {
+				fmt.Println("maxcount----------------:", file.filePath)
+				os.Remove(file.filePath)
+			}
+		}
+	case time.Duration:
+		criticalTime := time.Now().Add(-rf.reserveThreshold.(time.Duration))
+		for _, file := range generatedFiles {
+			if criticalTime.After(file.modTime) {
+				fmt.Println("maxage----------------:", file.filePath)
+				os.Remove(file.filePath)
+			}
+		}
+	default:
+		panic(errors.New("Unknown clean rule."))
+	}
 }
 
 func (rf *RotateFiles) Write(p []byte) (n int, err error) {
@@ -185,5 +234,8 @@ func (rf *RotateFiles) Write(p []byte) (n int, err error) {
 
 	rf.rotate()
 
-	return rf.file.Write(p)
+	len, err := rf.file.Write(p)
+	rf.size += len
+
+	return len, err
 }
