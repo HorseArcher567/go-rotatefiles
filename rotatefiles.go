@@ -21,13 +21,13 @@ type patternConversion struct {
 // RotateFiles represents file that gets automatically
 // rotated as you write to it.
 type RotateFiles struct {
-	fileName   string
+	filename   string
 	timeLayout string
 	dir        string
 
 	mutex sync.Mutex
 	// Current using file name
-	curFileName    string
+	curFilename    string
 	generation     int
 	lastRotateTime time.Time
 
@@ -47,13 +47,13 @@ type RotateFiles struct {
 }
 
 // New constructs a new RotateFiles from the provided file pattern and options.
-func New(filePattern string, options ...Option) (*RotateFiles, error) {
-	if len(filePattern) == 0 {
+func New(filename string, options ...Option) (*RotateFiles, error) {
+	if len(filename) == 0 {
 		return nil, errors.New("File pattern must not be empty")
 	}
 
 	rf := &RotateFiles{
-		fileName:   filePattern,
+		filename:   filename,
 		timeLayout: `2006-01-02`,
 		dir:        "./log/",
 		// default, use local time
@@ -83,7 +83,20 @@ func (rf *RotateFiles) rotate() {
 
 func (rf *RotateFiles) rotateByTime() bool {
 	now := rf.clock.Now()
-	truncTime := now.Truncate(rf.rotatePeroid)
+	var truncTime time.Time
+
+	if now.Location() != time.UTC {
+		truncTime = time.Date(now.Year(), now.Month(), now.Day(),
+			now.Hour(), now.Minute(), now.Second(),
+			now.Nanosecond(), time.UTC)
+		truncTime = truncTime.Truncate(rf.rotatePeroid)
+		truncTime = time.Date(truncTime.Year(), truncTime.Month(), truncTime.Day(),
+			truncTime.Hour(), truncTime.Minute(), truncTime.Second(),
+			truncTime.Nanosecond(), truncTime.Location())
+	} else {
+		truncTime = now.Truncate(rf.rotatePeroid)
+	}
+
 	if truncTime == rf.lastRotateTime {
 		return false
 	}
@@ -123,9 +136,9 @@ func (rf *RotateFiles) genFile() error {
 
 	fileTime := rf.lastRotateTime.Format(rf.timeLayout)
 	for {
-		rf.curFileName =
-			rf.fileName + fileTime + "_" + strconv.Itoa(rf.generation) + ".log"
-		_, err := os.Stat(rf.dir + rf.curFileName)
+		rf.curFilename =
+			rf.filename + fileTime + "_" + strconv.Itoa(rf.generation) + ".log"
+		_, err := os.Stat(rf.dir + rf.curFilename)
 		if os.IsNotExist(err) {
 			break
 		}
@@ -133,7 +146,7 @@ func (rf *RotateFiles) genFile() error {
 		rf.generation++
 	}
 
-	file, err := os.OpenFile(rf.dir+rf.curFileName,
+	file, err := os.OpenFile(rf.dir+rf.curFilename,
 		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
@@ -172,7 +185,7 @@ func (rf *RotateFiles) cleanFile() {
 	rf.cleanMutex.Lock()
 	defer rf.cleanMutex.Unlock()
 
-	matches, err := filepath.Glob(rf.dir + rf.fileName + "*.log")
+	matches, err := filepath.Glob(rf.dir + rf.filename + "*.log")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -186,7 +199,7 @@ func (rf *RotateFiles) cleanFile() {
 		_, file := filepath.Split(match)
 		index := strings.LastIndexByte(file, '_')
 		if index != -1 {
-			_, err := time.Parse(rf.timeLayout, file[len(rf.fileName):index])
+			_, err := time.Parse(rf.timeLayout, file[len(rf.filename):index])
 			if err != nil {
 				fmt.Println(err)
 				continue

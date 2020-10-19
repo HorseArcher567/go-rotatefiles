@@ -11,14 +11,13 @@ func TestNewRotateFiles(t *testing.T) {
 	var wg1 sync.WaitGroup
 	for j := 0; j < 10; j++ {
 		wg1.Add(1)
-		fileName := fmt.Sprintf("demo-info_%d_", j)
+		filename := fmt.Sprintf("demo-info_%d_", j)
 		go func(filename string) {
-			rf, err := New(fileName,
-				//WithTimeLayout("2006010215"),
+			rf, err := New(filename,
+				WithTimeLayout("2006-01-02_15"),
 				//WithDir("./"),
 				//WithMaxAge(time.Second*9),
 				WithMaxCount(6),
-				//WithMaxAge(time.Second*10),
 				WithRotateSize(1024*1024*2),
 			)
 
@@ -48,7 +47,7 @@ func TestNewRotateFiles(t *testing.T) {
 			}
 
 			wg1.Done()
-		}(fileName)
+		}(filename)
 	}
 
 	wg1.Wait()
