@@ -135,11 +135,16 @@ func (rf *RotateFiles) genFile() error {
 	}
 
 	fileTime := rf.lastRotateTime.Format(rf.timeLayout)
+	filesize := 0
 	for {
 		rf.curFilename =
 			rf.filename + fileTime + "_" + strconv.Itoa(rf.generation) + ".log"
-		_, err := os.Stat(rf.dir + rf.curFilename)
+		fileinfo, err := os.Stat(rf.dir + rf.curFilename)
 		if os.IsNotExist(err) {
+			filesize = 0
+			break
+		} else if err == nil && fileinfo.Size() < int64(rf.rotateSize) {
+			filesize = int(fileinfo.Size())
 			break
 		}
 
@@ -159,7 +164,7 @@ func (rf *RotateFiles) genFile() error {
 	go rf.cleanFile()
 
 	rf.file = file
-	rf.size = 0
+	rf.size = filesize
 	return nil
 }
 
@@ -191,8 +196,6 @@ func (rf *RotateFiles) cleanFile() {
 		return
 	}
 
-	//fmt.Println(matches)
-
 	generatedFiles := make([]*GeneratedFile, 0)
 
 	for _, match := range matches {
@@ -222,7 +225,6 @@ func (rf *RotateFiles) cleanFile() {
 		sort.Sort(GeneratedFileSlice(generatedFiles))
 		for index, file := range generatedFiles {
 			if index >= rf.reserveThreshold.(int) {
-				fmt.Println("maxcount----------------:", file.filePath)
 				os.Remove(file.filePath)
 			}
 		}
@@ -230,7 +232,6 @@ func (rf *RotateFiles) cleanFile() {
 		criticalTime := time.Now().Add(-rf.reserveThreshold.(time.Duration))
 		for _, file := range generatedFiles {
 			if criticalTime.After(file.modTime) {
-				fmt.Println("maxage----------------:", file.filePath)
 				os.Remove(file.filePath)
 			}
 		}
